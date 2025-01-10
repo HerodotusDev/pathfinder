@@ -9,7 +9,9 @@ use pathfinder_merkle_tree::{
     ContractsStorageTree,
     StorageCommitmentTree,
 };
-use serde::Serialize;
+use serde::{de, de::{SeqAccess, Visitor}, Deserialize, Serialize};
+use serde::Deserializer;
+use serde_json::{Map, Value};
 
 use crate::context::RpcContext;
 
@@ -152,6 +154,84 @@ impl Serialize for ProofNodes {
         }
 
         sequence.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ProofNodes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ProofNodesVisitor;
+
+        impl<'de> Visitor<'de> for ProofNodesVisitor {
+            type Value = ProofNodes;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("an array of proof nodes")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut nodes = Vec::new();
+                while let Some(map) = seq.next_element::<Map<String, Value>>()? {
+                    let node = if let Some(binary) = map.get("binary") {
+                        let binary = binary.as_object()
+                            .ok_or_else(|| de::Error::custom("invalid binary node format"))?;
+                        
+                        let parse_felt = |key: &str| -> Result<Felt, A::Error> {
+                            binary.get(key)
+                                .and_then(|v| v.as_str())
+                                .and_then(|s| Felt::from_hex_str(s).ok())
+                                .ok_or_else(|| de::Error::custom(format!("invalid {key} value")))
+                        };
+
+                        TrieNode::Binary { 
+                            left: parse_felt("left")?,
+                            right: parse_felt("right")?,
+                        }
+                    } else if let Some(edge) = map.get("edge") {
+                        let edge = edge.as_object()
+                            .ok_or_else(|| de::Error::custom("invalid edge node format"))?;
+                        
+                        let child = edge.get("child")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| Felt::from_hex_str(s).ok())
+                            .ok_or_else(|| de::Error::custom("invalid child value"))?;
+
+                        let path_obj = edge.get("path")
+                            .and_then(|v| v.as_object())
+                            .ok_or_else(|| de::Error::custom("invalid path format"))?;
+
+                        let value = path_obj.get("value")
+                            .and_then(|v| v.as_str())
+                            .and_then(|s| Felt::from_hex_str(s).ok())
+                            .ok_or_else(|| de::Error::custom("invalid path value"))?;
+
+                        let len = path_obj.get("len")
+                            .and_then(|v| v.as_u64())
+                            .ok_or_else(|| de::Error::custom("invalid path length"))? as usize;
+
+                        let mut bits = value.view_bits().to_bitvec();
+                        let bits_len = bits.len();
+                        if len > bits_len {
+                            return Err(de::Error::custom("path length exceeds available bits"));
+                        }
+                        let path = bits.split_off(bits_len - len);
+                        
+                        TrieNode::Edge { child, path }
+                    } else {
+                        return Err(de::Error::custom("expected binary or edge node"));
+                    };
+                    nodes.push(node);
+                }
+                Ok(ProofNodes(nodes))
+            }
+        }
+
+        deserializer.deserialize_seq(ProofNodesVisitor)
     }
 }
 
@@ -442,6 +522,7 @@ pub async fn get_class_proof(
 mod tests {
     use std::num::NonZeroU32;
 
+    use bitvec::order::Msb0;
     use pathfinder_common::macro_prelude::*;
     use pathfinder_merkle_tree::starknet_state::update_starknet_state;
 
@@ -657,5 +738,37 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn test_proof_nodes_serde() {
+        use pathfinder_common::trie::TrieNode;
+        use pathfinder_crypto::Felt;
+
+        // Create some test nodes
+        let nodes = vec![
+            TrieNode::Binary {
+                left: Felt::from_hex_str("0x1234").unwrap(),
+                right: Felt::from_hex_str("0x5678").unwrap(),
+            },
+            TrieNode::Edge {
+                path: bitvec::bitvec![u8, Msb0; 0, 1, 0, 1],
+                child: Felt::from_hex_str("0xabcd").unwrap(),
+            },
+        ];
+
+        let proof_nodes = ProofNodes(nodes);
+
+        // Serialize to JSON
+        let serialized = serde_json::to_string_pretty(&proof_nodes).unwrap();
+        println!("Serialized ProofNodes:\n{}", serialized);
+
+        // Deserialize back
+        let deserialized: ProofNodes = serde_json::from_str(&serialized).unwrap();
+
+        println!("Deserialized ProofNodes:\n{:?}", deserialized);
+        // Verify equality
+        assert_eq!(proof_nodes, deserialized);
+
     }
 }
