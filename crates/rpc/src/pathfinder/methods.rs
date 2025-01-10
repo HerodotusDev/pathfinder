@@ -1,4 +1,4 @@
-mod get_proof;
+pub mod get_proof;
 mod get_transaction_status;
 
 pub(crate) use get_proof::{get_class_proof, get_proof};

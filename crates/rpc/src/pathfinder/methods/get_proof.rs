@@ -236,7 +236,7 @@ impl<'de> Deserialize<'de> for ProofNodes {
 }
 
 /// Holds the data and proofs for a specific contract.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ContractData {
     /// Required to verify the contract state hash to contract root calculation.
     class_hash: ClassHash,
@@ -256,7 +256,7 @@ pub struct ContractData {
 
 /// Holds the membership/non-membership of a contract and its associated
 /// contract contract if the contract exists.
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct GetProofOutput {
     /// The global state commitment for Starknet 0.11.0 blocks onwards, if
     /// absent the hash of the first node in the

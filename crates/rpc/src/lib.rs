@@ -33,6 +33,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tower_http::cors::CorsLayer;
 use tower_http::ServiceBuilderExt;
+pub use pathfinder::methods::get_proof::GetProofOutput;
 
 use crate::jsonrpc::rpc_handler;
 use crate::jsonrpc::websocket::websocket_handler;
