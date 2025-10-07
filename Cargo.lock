@@ -8606,6 +8606,7 @@ dependencies = [
  "serde_with",
  "sha3",
  "thiserror 2.0.16",
+ "tiny-keccak",
  "vergen",
 ]
 
